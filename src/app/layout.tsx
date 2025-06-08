@@ -1,38 +1,42 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-import ClientBody from "./ClientBody";
-import { AuthProvider } from '@/contexts/AuthContext';
+import type { Metadata } from 'next'
+import { Inter } from 'next/font/google'
+import './globals.css'
+import { AuthProvider } from '@/contexts/AuthContext'
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: "Stuff That Works - Healthcare Community",
-  description: "Find what treatments work for your health condition",
-};
+  title: 'MedCommunity - Your Health Journey Starts Here',
+  description: 'Join our supportive community of patients, doctors, and health advocates. Track symptoms, manage treatments, and connect with others on similar health journeys.',
+  keywords: 'health, medical, community, symptoms, treatments, patients, doctors, healthcare',
+  authors: [{ name: 'MedCommunity Team' }],
+  viewport: 'width=device-width, initial-scale=1',
+  robots: 'index, follow',
+  openGraph: {
+    title: 'MedCommunity - Your Health Journey Starts Here',
+    description: 'Join our supportive community of patients, doctors, and health advocates.',
+    type: 'website',
+    locale: 'en_US',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'MedCommunity - Your Health Journey Starts Here',
+    description: 'Join our supportive community of patients, doctors, and health advocates.',
+  }
+}
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: {
+  children: React.ReactNode
+}) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body suppressHydrationWarning className="antialiased">
-        <ClientBody>
-          <AuthProvider>
-            {children}
-          </AuthProvider>
-        </ClientBody>
+    <html lang="en">
+      <body className={inter.className}>
+        <AuthProvider>
+          {children}
+        </AuthProvider>
       </body>
     </html>
-  );
+  )
 }

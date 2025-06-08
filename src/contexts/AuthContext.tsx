@@ -1,96 +1,195 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
+import { createSupabaseClient } from '@/lib/supabase'
+import type { User as SupabaseUser, Session } from '@supabase/supabase-js'
+import type { Database } from '@/lib/supabase'
 
-interface User {
-  id: string
-  name: string
-  email: string
-  avatar: string
-  joinedDate: string
-  conditions: string[]
-  currentTreatments: Array<{
-    name: string
-    startDate: string
-    effectiveness: number
-    sideEffects: string[]
-  }>
-}
+type UserProfile = Database['public']['Tables']['users']['Row']
 
 interface AuthContextType {
-  user: User | null
+  user: UserProfile | null
+  supabaseUser: SupabaseUser | null
+  session: Session | null
+  isLoading: boolean
   isLoggedIn: boolean
-  login: (email: string, password: string) => Promise<boolean>
-  logout: () => void
-  updateUser: (updates: Partial<User>) => void
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>
+  signup: (email: string, password: string, fullName: string) => Promise<{ success: boolean; error?: string }>
+  logout: () => Promise<void>
+  updateProfile: (updates: Partial<UserProfile>) => Promise<{ success: boolean; error?: string }>
+  resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-// Mock user data - in a real app, this would come from your backend
-const mockUser: User = {
-  id: '1',
-  name: 'Sarah Johnson',
-  email: 'sarah@example.com',
-  avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAiJwKoNBhoA2XUYAVNCnAu2ujcJmVaKtFC40tgSOjLQYqSTsstQLCNptPv6kkgZ0QiMBP_yw9zIcMSKoQcB6br0q8SIJlR-g0DH7l8aygZG12jBqQWOcbqUvgrtqqA6eqWdQS2GE_f1ebkdh9hLiRU6Ok5nl-k2Bg49nlf7h452d0-4ZHU5S2nzk2iZuzzafraMluQdl3BdoyG39-kZBDl-4fJmlkEggxPdCkXEJMTzHrB_h2hfZOJuuQMNPvKHSmwAdHppqKAI4c',
-  joinedDate: '2024-01-15',
-  conditions: ['Headaches & Migraines', 'Anxiety & Depression'],
-  currentTreatments: [
-    {
-      name: 'Sumatriptan',
-      startDate: '2024-02-01',
-      effectiveness: 85,
-      sideEffects: ['Mild nausea', 'Drowsiness']
-    },
-    {
-      name: 'Meditation',
-      startDate: '2024-01-20',
-      effectiveness: 70,
-      sideEffects: []
-    }
-  ]
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [user, setUser] = useState<UserProfile | null>(null)
+  const [supabaseUser, setSupabaseUser] = useState<SupabaseUser | null>(null)
+  const [session, setSession] = useState<Session | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const supabase = createSupabaseClient()
 
   useEffect(() => {
-    // Check if user is already logged in (e.g., from localStorage)
-    const savedUser = localStorage.getItem('user')
-    if (savedUser) {
-      setUser(JSON.parse(savedUser))
-      setIsLoggedIn(true)
+    // Get initial session
+    const getInitialSession = async () => {
+      const { data: { session: initialSession } } = await supabase.auth.getSession()
+
+      if (initialSession) {
+        setSession(initialSession)
+        setSupabaseUser(initialSession.user)
+        await fetchUserProfile(initialSession.user.id)
+      }
+
+      setIsLoading(false)
     }
+
+    getInitialSession()
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        setSession(session)
+
+        if (session?.user) {
+          setSupabaseUser(session.user)
+          await fetchUserProfile(session.user.id)
+        } else {
+          setSupabaseUser(null)
+          setUser(null)
+        }
+
+        setIsLoading(false)
+      }
+    )
+
+    return () => subscription.unsubscribe()
   }, [])
 
-  const login = async (email: string, password: string): Promise<boolean> => {
-    // Mock login - in a real app, you'd make an API call
-    if (email === 'sarah@example.com' && password === 'password') {
-      setUser(mockUser)
-      setIsLoggedIn(true)
-      localStorage.setItem('user', JSON.stringify(mockUser))
-      return true
-    }
-    return false
-  }
+  const fetchUserProfile = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .single()
 
-  const logout = () => {
-    setUser(null)
-    setIsLoggedIn(false)
-    localStorage.removeItem('user')
-  }
+      if (error) {
+        console.error('Error fetching user profile:', error)
+        return
+      }
 
-  const updateUser = (updates: Partial<User>) => {
-    if (user) {
-      const updatedUser = { ...user, ...updates }
-      setUser(updatedUser)
-      localStorage.setItem('user', JSON.stringify(updatedUser))
+      setUser(data)
+    } catch (error) {
+      console.error('Error fetching user profile:', error)
     }
   }
+
+  const login = async (email: string, password: string) => {
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (error) {
+        return { success: false, error: error.message }
+      }
+
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: 'An unexpected error occurred' }
+    }
+  }
+
+  const signup = async (email: string, password: string, fullName: string) => {
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+          },
+        },
+      })
+
+      if (error) {
+        return { success: false, error: error.message }
+      }
+
+      // User profile will be created automatically by the database trigger
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: 'An unexpected error occurred' }
+    }
+  }
+
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut()
+      setUser(null)
+      setSupabaseUser(null)
+      setSession(null)
+    } catch (error) {
+      console.error('Error logging out:', error)
+    }
+  }
+
+  const updateProfile = async (updates: Partial<UserProfile>) => {
+    if (!user) {
+      return { success: false, error: 'No user logged in' }
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .update(updates)
+        .eq('id', user.id)
+        .select()
+        .single()
+
+      if (error) {
+        return { success: false, error: error.message }
+      }
+
+      setUser(data)
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: 'An unexpected error occurred' }
+    }
+  }
+
+  const resetPassword = async (email: string) => {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      })
+
+      if (error) {
+        return { success: false, error: error.message }
+      }
+
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: 'An unexpected error occurred' }
+    }
+  }
+
+  const isLoggedIn = !!session && !!user
 
   return (
-    <AuthContext.Provider value={{ user, isLoggedIn, login, logout, updateUser }}>
+    <AuthContext.Provider value={{
+      user,
+      supabaseUser,
+      session,
+      isLoading,
+      isLoggedIn,
+      login,
+      signup,
+      logout,
+      updateProfile,
+      resetPassword,
+    }}>
       {children}
     </AuthContext.Provider>
   )
