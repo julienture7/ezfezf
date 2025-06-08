@@ -39,31 +39,31 @@ async function main() {
       name: 'Migraine',
       description: 'A type of headache characterized by severe pain',
       category: 'Neurological',
-      symptoms: ['Headache', 'Nausea', 'Dizziness']
+      symptoms: JSON.stringify(['Headache', 'Nausea', 'Dizziness'])
     },
     {
       name: 'Chronic Fatigue Syndrome',
       description: 'A complex disorder characterized by extreme fatigue',
       category: 'Immunological',
-      symptoms: ['Fatigue', 'Sleep Issues', 'Brain Fog']
+      symptoms: JSON.stringify(['Fatigue', 'Sleep Issues', 'Brain Fog'])
     },
     {
       name: 'Fibromyalgia',
       description: 'A disorder characterized by widespread musculoskeletal pain',
       category: 'Rheumatological',
-      symptoms: ['Joint Pain', 'Muscle Tension', 'Fatigue']
+      symptoms: JSON.stringify(['Joint Pain', 'Muscle Tension', 'Fatigue'])
     },
     {
       name: 'Anxiety Disorder',
       description: 'A mental health disorder characterized by excessive worry',
       category: 'Mental Health',
-      symptoms: ['Anxiety', 'Sleep Issues', 'Mood Changes']
+      symptoms: JSON.stringify(['Anxiety', 'Sleep Issues', 'Mood Changes'])
     },
     {
       name: 'Irritable Bowel Syndrome',
       description: 'A common disorder affecting the large intestine',
       category: 'Gastrointestinal',
-      symptoms: ['Stomach Pain', 'Nausea']
+      symptoms: JSON.stringify(['Stomach Pain', 'Nausea'])
     }
   ]
 
@@ -81,36 +81,36 @@ async function main() {
       name: 'Sumatriptan',
       type: TreatmentType.MEDICATION,
       description: 'Medication for migraine treatment',
-      sideEffects: ['Drowsiness', 'Nausea'],
-      contraindications: ['Heart disease', 'Pregnancy']
+      sideEffects: JSON.stringify(['Drowsiness', 'Nausea']),
+      contraindications: JSON.stringify(['Heart disease', 'Pregnancy'])
     },
     {
       name: 'Cognitive Behavioral Therapy',
       type: TreatmentType.THERAPY,
       description: 'Psychological treatment for anxiety and depression',
-      sideEffects: [],
-      contraindications: []
+      sideEffects: JSON.stringify([]),
+      contraindications: JSON.stringify([])
     },
     {
       name: 'Regular Exercise',
       type: TreatmentType.LIFESTYLE,
       description: 'Physical activity for overall health',
-      sideEffects: [],
-      contraindications: ['Severe heart conditions']
+      sideEffects: JSON.stringify([]),
+      contraindications: JSON.stringify(['Severe heart conditions'])
     },
     {
       name: 'Meditation',
       type: TreatmentType.ALTERNATIVE,
       description: 'Mindfulness practice for stress reduction',
-      sideEffects: [],
-      contraindications: []
+      sideEffects: JSON.stringify([]),
+      contraindications: JSON.stringify([])
     },
     {
       name: 'Ibuprofen',
       type: TreatmentType.MEDICATION,
       description: 'Anti-inflammatory pain reliever',
-      sideEffects: ['Stomach upset', 'Drowsiness'],
-      contraindications: ['Kidney disease', 'Blood thinners']
+      sideEffects: JSON.stringify(['Stomach upset', 'Drowsiness']),
+      contraindications: JSON.stringify(['Kidney disease', 'Blood thinners'])
     }
   ]
 
@@ -179,7 +179,7 @@ async function main() {
         name: 'Migraine Support Group',
         description: 'A supportive community for people dealing with migraines',
         conditionId: migraineCondition.id,
-        moderatorIds: [demoDoctor.id],
+        moderatorIds: JSON.stringify([demoDoctor.id]),
         rules: 'Be respectful and supportive. Share experiences and tips.',
         memberCount: 150,
         postCount: 45
@@ -195,7 +195,7 @@ async function main() {
         name: 'Anxiety and Mental Health',
         description: 'Support and discussion for anxiety and mental health',
         conditionId: anxietyCondition.id,
-        moderatorIds: [demoDoctor.id],
+        moderatorIds: JSON.stringify([demoDoctor.id]),
         rules: 'Respectful discussion only. No medical advice.',
         memberCount: 89,
         postCount: 23

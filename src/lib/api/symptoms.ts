@@ -66,7 +66,7 @@ export async function logSymptom(userId: string, symptomData: SymptomLogData) {
         symptomId: symptomData.symptomId,
         severity: symptomData.severity,
         notes: symptomData.notes || null,
-        triggers: symptomData.triggers || [],
+        triggers: JSON.stringify(symptomData.triggers || []),
         durationMinutes: symptomData.durationMinutes || null,
         loggedAt: new Date(symptomData.loggedAt),
       },
@@ -177,9 +177,14 @@ export async function getSymptomStats(userId: string, days = 30) {
     // Find most common trigger
     const triggerCounts: Record<string, number> = {}
     logs.forEach(log => {
-      log.triggers?.forEach(trigger => {
-        triggerCounts[trigger] = (triggerCounts[trigger] || 0) + 1
-      })
+      try {
+        const triggers = JSON.parse(log.triggers || '[]')
+        triggers.forEach((trigger: string) => {
+          triggerCounts[trigger] = (triggerCounts[trigger] || 0) + 1
+        })
+      } catch (e) {
+        // Handle legacy data or malformed JSON
+      }
     })
 
     stats.topTrigger = Object.keys(triggerCounts).reduce((a, b) =>

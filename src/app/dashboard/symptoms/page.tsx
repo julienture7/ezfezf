@@ -37,47 +37,52 @@ export default function SymptomsPage() {
   const [selectedSymptom, setSelectedSymptom] = useState('')
   const [triggers, setTriggers] = useState<string[]>([])
   const [notes, setNotes] = useState('')
-
-  // Mock data - in real app, this would come from your API
-  const commonSymptoms = [
-    'Headache', 'Fatigue', 'Nausea', 'Dizziness', 'Joint Pain',
-    'Anxiety', 'Sleep Issues', 'Stomach Pain', 'Muscle Tension', 'Mood Changes'
-  ]
+  const [symptoms, setSymptoms] = useState<any[]>([])
+  const [logs, setLogs] = useState<any[]>([])
+  const [stats, setStats] = useState<any>({})
+  const [loading, setLoading] = useState(true)
 
   const commonTriggers = [
     'Stress', 'Weather', 'Food', 'Exercise', 'Sleep', 'Medication',
     'Work', 'Social Situations', 'Screen Time', 'Bright Lights'
   ]
 
-  const recentLogs: SymptomLog[] = [
-    {
-      id: '1',
-      symptomName: 'Headache',
-      severity: 7,
-      duration: 120,
-      triggers: ['Stress', 'Screen Time'],
-      notes: 'Started after long work session, felt better after break',
-      timestamp: '2024-06-08T14:30:00Z'
-    },
-    {
-      id: '2',
-      symptomName: 'Fatigue',
-      severity: 5,
-      duration: 240,
-      triggers: ['Sleep'],
-      notes: 'Poor sleep last night, felt tired all morning',
-      timestamp: '2024-06-08T09:00:00Z'
-    },
-    {
-      id: '3',
-      symptomName: 'Nausea',
-      severity: 4,
-      duration: 30,
-      triggers: ['Food'],
-      notes: 'After breakfast, went away quickly',
-      timestamp: '2024-06-07T08:30:00Z'
+  // Load data on component mount
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true)
+
+        // Fetch symptoms, logs, and stats in parallel
+        const [symptomsRes, logsRes, statsRes] = await Promise.all([
+          fetch('/api/symptoms'),
+          fetch('/api/symptoms/logs'),
+          fetch('/api/symptoms/stats')
+        ])
+
+        if (symptomsRes.ok) {
+          const symptomsData = await symptomsRes.json()
+          setSymptoms(symptomsData)
+        }
+
+        if (logsRes.ok) {
+          const logsData = await logsRes.json()
+          setLogs(logsData)
+        }
+
+        if (statsRes.ok) {
+          const statsData = await statsRes.json()
+          setStats(statsData)
+        }
+      } catch (error) {
+        console.error('Error fetching data:', error)
+      } finally {
+        setLoading(false)
+      }
     }
-  ]
+
+    fetchData()
+  }, [])
 
   const toggleTrigger = (trigger: string) => {
     setTriggers(prev =>
@@ -87,31 +92,59 @@ export default function SymptomsPage() {
     )
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    const newLog: SymptomLog = {
-      id: Date.now().toString(),
-      symptomName: selectedSymptom,
-      severity: severity[0],
-      duration: Number.parseInt(duration) || 0,
-      triggers,
-      notes,
-      timestamp: new Date().toISOString()
+    try {
+      const response = await fetch('/api/symptoms/log', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          symptomId: selectedSymptom,
+          severity: severity[0],
+          durationMinutes: Number.parseInt(duration) || 0,
+          triggers,
+          notes,
+          loggedAt: new Date().toISOString()
+        }),
+      })
+
+      if (response.ok) {
+        // Reset form
+        setSelectedSymptom('')
+        setSeverity([5])
+        setDuration('')
+        setTriggers([])
+        setNotes('')
+        setShowLogForm(false)
+
+        // Refresh data
+        const [logsRes, statsRes] = await Promise.all([
+          fetch('/api/symptoms/logs'),
+          fetch('/api/symptoms/stats')
+        ])
+
+        if (logsRes.ok) {
+          const logsData = await logsRes.json()
+          setLogs(logsData)
+        }
+
+        if (statsRes.ok) {
+          const statsData = await statsRes.json()
+          setStats(statsData)
+        }
+
+        alert('Symptom logged successfully!')
+      } else {
+        const error = await response.json()
+        alert(`Error: ${error.error}`)
+      }
+    } catch (error) {
+      console.error('Error logging symptom:', error)
+      alert('Failed to log symptom')
     }
-
-    console.log('New symptom log:', newLog)
-
-    // Reset form
-    setSelectedSymptom('')
-    setSeverity([5])
-    setDuration('')
-    setTriggers([])
-    setNotes('')
-    setShowLogForm(false)
-
-    // In real app, save to API
-    alert('Symptom logged successfully!')
   }
 
   const formatDuration = (minutes: number) => {
@@ -158,7 +191,7 @@ export default function SymptomsPage() {
             <Heart className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">2</div>
+            <div className="text-2xl font-bold">{stats.todayCount || 0}</div>
             <p className="text-xs text-muted-foreground">-1 from yesterday</p>
           </CardContent>
         </Card>
@@ -169,7 +202,7 @@ export default function SymptomsPage() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">5.3/10</div>
+            <div className="text-2xl font-bold">{stats.averageSeverity ? `${stats.averageSeverity.toFixed(1)}/10` : '0/10'}</div>
             <p className="text-xs text-muted-foreground">This week</p>
           </CardContent>
         </Card>
@@ -180,7 +213,7 @@ export default function SymptomsPage() {
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">Headache</div>
+            <div className="text-2xl font-bold">{stats.mostCommonSymptom || 'None'}</div>
             <p className="text-xs text-muted-foreground">12 times this month</p>
           </CardContent>
         </Card>
@@ -191,7 +224,7 @@ export default function SymptomsPage() {
             <Filter className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">Stress</div>
+            <div className="text-2xl font-bold">{stats.topTrigger || 'None'}</div>
             <p className="text-xs text-muted-foreground">65% of symptoms</p>
           </CardContent>
         </Card>
@@ -216,9 +249,9 @@ export default function SymptomsPage() {
                       <SelectValue placeholder="Select symptom type" />
                     </SelectTrigger>
                     <SelectContent>
-                      {commonSymptoms.map((symptom) => (
-                        <SelectItem key={symptom} value={symptom}>
-                          {symptom}
+                      {symptoms.map((symptom) => (
+                        <SelectItem key={symptom.id} value={symptom.id}>
+                          {symptom.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -306,11 +339,11 @@ export default function SymptomsPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {recentLogs.map((log) => (
+            {logs.map((log) => (
               <div key={log.id} className="border rounded-lg p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
-                    <h3 className="font-semibold text-lg">{log.symptomName}</h3>
+                    <h3 className="font-semibold text-lg">{log.symptom?.name}</h3>
                     <div className="flex items-center space-x-2">
                       <div
                         className={`w-3 h-3 rounded-full ${getSeverityColor(log.severity)}`}
@@ -322,8 +355,8 @@ export default function SymptomsPage() {
                   </div>
                   <div className="flex items-center text-sm text-gray-500">
                     <Clock className="h-4 w-4 mr-1" />
-                    {new Date(log.timestamp).toLocaleDateString()} at{' '}
-                    {new Date(log.timestamp).toLocaleTimeString([], {
+                    {new Date(log.loggedAt).toLocaleDateString()} at{' '}
+                    {new Date(log.loggedAt).toLocaleTimeString([], {
                       hour: '2-digit',
                       minute: '2-digit'
                     })}
