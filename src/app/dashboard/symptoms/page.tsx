@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useAuth } from '@/contexts/AuthContext'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,7 +10,15 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Badge } from '@/components/ui/badge'
-import { Calendar, Heart, Clock, TrendingUp, Plus, Filter } from 'lucide-react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Calendar, Heart, Clock, TrendingUp, Plus, Filter, AlertCircle, Loader2 } from 'lucide-react'
+import {
+  getSymptoms,
+  getUserSymptomLogs,
+  logSymptom,
+  getSymptomStats,
+  type SymptomLogData
+} from '@/lib/api/symptoms'
 
 interface SymptomLog {
   id: string
