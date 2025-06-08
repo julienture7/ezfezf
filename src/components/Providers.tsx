@@ -2,7 +2,7 @@
 
 import { SessionProvider } from 'next-auth/react'
 import { AuthProvider } from '@/contexts/AuthContext'
-import { ReactNode } from 'react'
+import type { ReactNode } from 'react'
 
 interface ProvidersProps {
   children: ReactNode

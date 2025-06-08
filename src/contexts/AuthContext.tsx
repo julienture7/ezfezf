@@ -2,7 +2,7 @@
 
 import { createContext, useContext, type ReactNode } from 'react'
 import { useSession, signIn, signOut } from 'next-auth/react'
-import { UserRole } from '@prisma/client'
+import type { UserRole } from '@prisma/client'
 
 interface UserProfile {
   id: string

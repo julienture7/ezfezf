@@ -17,56 +17,69 @@ import {
   Plus
 } from 'lucide-react'
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
+
+interface DashboardData {
+  healthMetrics: {
+    symptomsToday: number
+    activeTreatments: number
+    appointmentsThisWeek: number
+    treatmentEffectiveness: number
+  }
+  recentSymptoms: Array<{
+    id: string
+    name: string
+    severity: number
+    time: string
+  }>
+  upcomingAppointments: Array<{
+    id: string
+    title: string
+    date: string
+    time: string
+    type: string
+  }>
+  currentTreatments: Array<{
+    id: string
+    name: string
+    type: string
+    effectiveness: number
+    dosage?: string
+    frequency?: string
+  }>
+  stats: {
+    symptomStats: any
+    treatmentStats: any
+    conditionStats: any
+  }
+}
 
 export default function DashboardPage() {
   const { user } = useAuth()
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
-  // Mock data - in a real app, this would come from your API
-  const healthMetrics = {
-    symptomsToday: 2,
-    medicationsTaken: 3,
-    appointmentsThisWeek: 1,
-    treatmentEffectiveness: 78
-  }
-
-  const recentSymptoms = [
-    { id: 1, name: 'Headache', severity: 6, time: '2 hours ago' },
-    { id: 2, name: 'Fatigue', severity: 4, time: '5 hours ago' },
-    { id: 3, name: 'Nausea', severity: 3, time: 'Yesterday' }
-  ]
-
-  const upcomingAppointments = [
-    {
-      id: 1,
-      title: 'Dr. Smith - Neurology',
-      date: 'Tomorrow',
-      time: '2:00 PM',
-      type: 'in_person'
-    },
-    {
-      id: 2,
-      title: 'Dr. Johnson - General',
-      date: 'Friday',
-      time: '10:30 AM',
-      type: 'video_call'
+  useEffect(() => {
+    async function fetchDashboardData() {
+      try {
+        const response = await fetch('/api/dashboard/stats')
+        if (response.ok) {
+          const data = await response.json()
+          setDashboardData(data)
+        }
+      } catch (error) {
+        console.error('Error fetching dashboard data:', error)
+      } finally {
+        setIsLoading(false)
+      }
     }
-  ]
 
-  const currentTreatments = [
-    {
-      id: 1,
-      name: 'Sumatriptan',
-      nextDose: 'In 2 hours',
-      effectiveness: 85
-    },
-    {
-      id: 2,
-      name: 'Meditation',
-      nextSession: 'Tomorrow 7:00 AM',
-      effectiveness: 70
+    if (user) {
+      fetchDashboardData()
     }
-  ]
+  }, [user])
 
+  // Mock forum activity data (not implemented in API yet)
   const recentForumActivity = [
     {
       id: 1,
@@ -84,19 +97,40 @@ export default function DashboardPage() {
     }
   ]
 
-  if (user?.role === 'doctor') {
+  if (user?.role === 'DOCTOR') {
     return <DoctorDashboard />
   }
 
-  if (user?.role === 'admin') {
+  if (user?.role === 'ADMIN') {
     return <AdminDashboard />
   }
+
+  if (isLoading) {
+    return (
+      <div className="px-4 sm:px-6 lg:px-8">
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-gray-900">Loading...</h1>
+        </div>
+      </div>
+    )
+  }
+
+  const healthMetrics = dashboardData?.healthMetrics || {
+    symptomsToday: 0,
+    activeTreatments: 0,
+    appointmentsThisWeek: 0,
+    treatmentEffectiveness: 0
+  }
+
+  const recentSymptoms = dashboardData?.recentSymptoms || []
+  const upcomingAppointments = dashboardData?.upcomingAppointments || []
+  const currentTreatments = dashboardData?.currentTreatments || []
 
   return (
     <div className="px-4 sm:px-6 lg:px-8">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">
-          Welcome back, {user?.full_name || 'User'}!
+          Welcome back, {user?.fullName || user?.name || 'User'}!
         </h1>
         <p className="mt-2 text-gray-600">
           Here's an overview of your health journey today.
@@ -120,13 +154,13 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Medications Taken</CardTitle>
+            <CardTitle className="text-sm font-medium">Active Treatments</CardTitle>
             <Pill className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{healthMetrics.medicationsTaken}/4</div>
+            <div className="text-2xl font-bold">{healthMetrics.activeTreatments}</div>
             <p className="text-xs text-muted-foreground">
-              1 dose remaining today
+              Active treatments
             </p>
           </CardContent>
         </Card>
@@ -139,7 +173,7 @@ export default function DashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">{healthMetrics.appointmentsThisWeek}</div>
             <p className="text-xs text-muted-foreground">
-              Next: Tomorrow 2:00 PM
+              {upcomingAppointments.length > 0 ? `Next: ${upcomingAppointments[0].date} ${upcomingAppointments[0].time}` : 'No upcoming appointments'}
             </p>
           </CardContent>
         </Card>
@@ -152,7 +186,7 @@ export default function DashboardPage() {
           <CardContent>
             <div className="text-2xl font-bold">{healthMetrics.treatmentEffectiveness}%</div>
             <p className="text-xs text-muted-foreground">
-              +5% from last week
+              Average effectiveness
             </p>
           </CardContent>
         </Card>
@@ -174,23 +208,27 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {recentSymptoms.map((symptom) => (
-                <div key={symptom.id} className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">{symptom.name}</p>
-                    <p className="text-sm text-gray-500">{symptom.time}</p>
-                  </div>
-                  <div className="flex items-center">
-                    <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
-                      <div
-                        className="bg-red-600 h-2 rounded-full"
-                        style={{ width: `${(symptom.severity / 10) * 100}%` }}
-                      ></div>
+              {recentSymptoms.length > 0 ? (
+                recentSymptoms.map((symptom) => (
+                  <div key={symptom.id} className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{symptom.name}</p>
+                      <p className="text-sm text-gray-500">{symptom.time}</p>
                     </div>
-                    <span className="text-sm font-medium">{symptom.severity}/10</span>
+                    <div className="flex items-center">
+                      <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
+                        <div
+                          className="bg-red-600 h-2 rounded-full"
+                          style={{ width: `${(symptom.severity / 10) * 100}%` }}
+                        ></div>
+                      </div>
+                      <span className="text-sm font-medium">{symptom.severity}/10</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-gray-500 text-center">No recent symptoms logged</p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -210,27 +248,31 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {upcomingAppointments.map((appointment) => (
-                <div key={appointment.id} className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">{appointment.title}</p>
-                    <p className="text-sm text-gray-500">
-                      {appointment.date} at {appointment.time}
-                    </p>
+              {upcomingAppointments.length > 0 ? (
+                upcomingAppointments.map((appointment) => (
+                  <div key={appointment.id} className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{appointment.title}</p>
+                      <p className="text-sm text-gray-500">
+                        {appointment.date} at {appointment.time}
+                      </p>
+                    </div>
+                    <div className="flex items-center">
+                      {appointment.type === 'video_call' ? (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          Video Call
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                          In Person
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center">
-                    {appointment.type === 'video_call' ? (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                        Video Call
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                        In Person
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-gray-500 text-center">No upcoming appointments</p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -251,18 +293,23 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {currentTreatments.map((treatment) => (
-                <div key={treatment.id} className="p-4 bg-gray-50 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="font-medium">{treatment.name}</h4>
-                    <span className="text-sm text-gray-500">{treatment.effectiveness}% effective</span>
+              {currentTreatments.length > 0 ? (
+                currentTreatments.map((treatment) => (
+                  <div key={treatment.id} className="p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-medium">{treatment.name}</h4>
+                      <span className="text-sm text-gray-500">{treatment.effectiveness}% effective</span>
+                    </div>
+                    <div className="flex items-center text-sm text-gray-600">
+                      <Clock className="h-4 w-4 mr-1" />
+                      {treatment.dosage && `${treatment.dosage} `}
+                      {treatment.frequency && `- ${treatment.frequency}`}
+                    </div>
                   </div>
-                  <div className="flex items-center text-sm text-gray-600">
-                    <Clock className="h-4 w-4 mr-1" />
-                    {treatment.nextDose || treatment.nextSession}
-                  </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-gray-500 text-center">No active treatments</p>
+              )}
             </div>
           </CardContent>
         </Card>

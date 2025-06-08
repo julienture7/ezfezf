@@ -364,19 +364,26 @@ export default function SymptomsPage() {
                 </div>
 
                 <div className="flex items-center space-x-4 text-sm text-gray-600">
-                  <span>Duration: {formatDuration(log.duration)}</span>
-                  {log.triggers.length > 0 && (
-                    <div className="flex items-center space-x-1">
-                      <span>Triggers:</span>
-                      <div className="flex space-x-1">
-                        {log.triggers.map((trigger) => (
-                          <Badge key={trigger} variant="secondary" className="text-xs">
-                            {trigger}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  {log.durationMinutes && <span>Duration: {formatDuration(log.durationMinutes)}</span>}
+                  {log.triggers && (() => {
+                    try {
+                      const triggerArray = JSON.parse(log.triggers)
+                      return triggerArray.length > 0 && (
+                        <div className="flex items-center space-x-1">
+                          <span>Triggers:</span>
+                          <div className="flex space-x-1">
+                            {triggerArray.map((trigger: string, index: number) => (
+                              <Badge key={index} variant="secondary" className="text-xs">
+                                {trigger}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    } catch {
+                      return null
+                    }
+                  })()}
                 </div>
 
                 {log.notes && (
@@ -388,7 +395,7 @@ export default function SymptomsPage() {
             ))}
           </div>
 
-          {recentLogs.length === 0 && (
+          {logs.length === 0 && (
             <div className="text-center py-8">
               <Heart className="h-12 w-12 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">No symptoms logged yet</h3>

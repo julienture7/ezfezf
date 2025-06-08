@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -63,13 +63,54 @@ export default function TreatmentsPage() {
   const [sideEffects, setSideEffects] = useState<string[]>([])
   const [reminderEnabled, setReminderEnabled] = useState(true)
 
-  // Mock data - in real app, this would come from your API
-  const treatmentTypes = ['medication', 'therapy', 'lifestyle', 'alternative']
-  const conditions = ['Migraine', 'Anxiety', 'Depression', 'GERD', 'Hypertension']
+  // API Data
+  const [treatments, setTreatments] = useState<any[]>([])
+  const [conditions, setConditions] = useState<any[]>([])
+  const [userTreatments, setUserTreatments] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const treatmentTypes = ['MEDICATION', 'THERAPY', 'LIFESTYLE', 'ALTERNATIVE']
   const commonSideEffects = [
     'Nausea', 'Dizziness', 'Drowsiness', 'Headache', 'Fatigue',
     'Dry mouth', 'Upset stomach', 'Insomnia', 'Weight gain', 'Weight loss'
   ]
+
+  // Load data on component mount
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true)
+
+        // Fetch treatments, conditions, and user treatments in parallel
+        const [treatmentsRes, conditionsRes, userTreatmentsRes] = await Promise.all([
+          fetch('/api/treatments'),
+          fetch('/api/conditions'),
+          fetch('/api/treatments/user')
+        ])
+
+        if (treatmentsRes.ok) {
+          const treatmentsData = await treatmentsRes.json()
+          setTreatments(treatmentsData)
+        }
+
+        if (conditionsRes.ok) {
+          const conditionsData = await conditionsRes.json()
+          setConditions(conditionsData)
+        }
+
+        if (userTreatmentsRes.ok) {
+          const userTreatmentsData = await userTreatmentsRes.json()
+          setUserTreatments(userTreatmentsData)
+        }
+      } catch (error) {
+        console.error('Error fetching data:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [])
 
   const currentTreatments: Treatment[] = [
     {
