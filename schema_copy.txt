@@ -1,0 +1,376 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// NextAuth.js required models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// Enums
+enum UserRole {
+  PATIENT
+  DOCTOR
+  ADMIN
+}
+
+enum TreatmentType {
+  MEDICATION
+  THERAPY
+  LIFESTYLE
+  ALTERNATIVE
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+}
+
+enum AppointmentType {
+  IN_PERSON
+  VIDEO_CALL
+  PHONE_CALL
+}
+
+// Main application models
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  emailVerified    DateTime?
+  image            String?
+  name             String?
+  fullName         String?
+  password         String?   // For credentials authentication
+  dateOfBirth      DateTime?
+  gender           String?
+  phone            String?
+  address          String?
+  emergencyContact String?
+  role             UserRole  @default(PATIENT)
+  verified         Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // NextAuth.js relations
+  accounts Account[]
+  sessions Session[]
+
+  // Application relations
+  userTreatments      UserTreatment[]
+  userSymptoms        UserSymptom[]
+  userConditions      UserCondition[]
+  patientAppointments Appointment[]   @relation("PatientAppointments")
+  doctorAppointments  Appointment[]   @relation("DoctorAppointments")
+  sentMessages        Message[]       @relation("SentMessages")
+  receivedMessages    Message[]       @relation("ReceivedMessages")
+  posts               Post[]
+  comments            Comment[]
+  notifications       Notification[]
+  medicationReminders MedicationReminder[]
+  doctorProfile       DoctorProfile?
+  forumMemberships    ForumMembership[]
+
+  @@map("users")
+}
+
+model Condition {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  category    String
+  symptoms    String // JSON string array
+  createdAt   DateTime @default(now())
+
+  userConditions UserCondition[]
+  userTreatments UserTreatment[]
+  forums         Forum[]
+
+  @@map("conditions")
+}
+
+model Treatment {
+  id                 String        @id @default(cuid())
+  name               String        @unique
+  type               TreatmentType
+  description        String?
+  sideEffects        String // JSON string array
+  contraindications  String // JSON string array
+  createdAt          DateTime      @default(now())
+
+  userTreatments UserTreatment[]
+
+  @@map("treatments")
+}
+
+model UserTreatment {
+  id                        String    @id @default(cuid())
+  userId                    String
+  treatmentId               String
+  conditionId               String
+  startDate                 DateTime
+  endDate                   DateTime?
+  dosage                    String?
+  frequency                 String?
+  effectivenessRating       Int?      // 1-10 scale
+  sideEffectsExperienced    String // JSON string array
+  notes                     String?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  treatment          Treatment            @relation(fields: [treatmentId], references: [id], onDelete: Cascade)
+  condition          Condition            @relation(fields: [conditionId], references: [id], onDelete: Cascade)
+  medicationReminders MedicationReminder[]
+
+  @@map("user_treatments")
+}
+
+model Symptom {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  description     String?
+  severityScale   String   @default("1-10")
+  measurementUnit String?
+  createdAt       DateTime @default(now())
+
+  userSymptoms UserSymptom[]
+
+  @@map("symptoms")
+}
+
+model UserSymptom {
+  id              String   @id @default(cuid())
+  userId          String
+  symptomId       String
+  severity        Int      // 1-10 scale
+  notes           String?
+  triggers        String // JSON string array
+  durationMinutes Int?
+  loggedAt        DateTime
+  createdAt       DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symptom Symptom @relation(fields: [symptomId], references: [id], onDelete: Cascade)
+
+  @@map("user_symptoms")
+}
+
+model Appointment {
+  id              String            @id @default(cuid())
+  patientId       String
+  doctorId        String?
+  title           String
+  description     String?
+  appointmentDate DateTime
+  durationMinutes Int               @default(30)
+  status          AppointmentStatus @default(SCHEDULED)
+  location        String?
+  type            AppointmentType   @default(IN_PERSON)
+  notes           String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  patient User  @relation("PatientAppointments", fields: [patientId], references: [id], onDelete: Cascade)
+  doctor  User? @relation("DoctorAppointments", fields: [doctorId], references: [id], onDelete: SetNull)
+
+  @@map("appointments")
+}
+
+model Forum {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  conditionId String?
+  moderatorIds String // JSON string array
+  rules       String?
+  isPrivate   Boolean  @default(false)
+  memberCount Int      @default(0)
+  postCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  condition   Condition?        @relation(fields: [conditionId], references: [id], onDelete: SetNull)
+  posts       Post[]
+  memberships ForumMembership[]
+
+  @@map("forums")
+}
+
+model Post {
+  id           String   @id @default(cuid())
+  forumId      String
+  authorId     String
+  title        String
+  content      String
+  tags         String // JSON string array
+  voteScore    Int      @default(0)
+  viewCount    Int      @default(0)
+  commentCount Int      @default(0)
+  isPinned     Boolean  @default(false)
+  isLocked     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  forum    Forum     @relation(fields: [forumId], references: [id], onDelete: Cascade)
+  author   User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  comments Comment[]
+
+  @@map("posts")
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  postId    String
+  authorId  String
+  content   String
+  parentId  String?
+  voteScore Int      @default(0)
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  post     Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author   User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent   Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  Comment[] @relation("CommentReplies")
+
+  @@map("comments")
+}
+
+model Message {
+  id                    String   @id @default(cuid())
+  senderId              String
+  recipientId           String
+  subject               String?
+  content               String
+  isRead                Boolean  @default(false)
+  isDeletedBySender     Boolean  @default(false)
+  isDeletedByRecipient  Boolean  @default(false)
+  createdAt             DateTime @default(now())
+
+  sender    User @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User @relation("ReceivedMessages", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+model ForumMembership {
+  id       String   @id @default(cuid())
+  forumId  String
+  userId   String
+  role     String   @default("member") // member, moderator, admin
+  joinedAt DateTime @default(now())
+
+  forum Forum @relation(fields: [forumId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([forumId, userId])
+  @@map("forum_memberships")
+}
+
+model UserCondition {
+  id            String    @id @default(cuid())
+  userId        String
+  conditionId   String
+  diagnosedDate DateTime?
+  severity      String?
+  notes         String?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  condition Condition @relation(fields: [conditionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, conditionId])
+  @@map("user_conditions")
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String
+  content     String
+  type        String   // appointment, message, forum, treatment
+  referenceId String?  // ID of related item
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model MedicationReminder {
+  id              String   @id @default(cuid())
+  userId          String
+  userTreatmentId String
+  reminderTime    String   // Time in HH:MM format
+  daysOfWeek      String   @default("1,2,3,4,5,6,7") // Comma-separated: 1=Monday, 7=Sunday
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userTreatment UserTreatment @relation(fields: [userTreatmentId], references: [id], onDelete: Cascade)
+
+  @@map("medication_reminders")
+}
+
+model DoctorProfile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  specialty         String?
+  licenseNumber     String?
+  yearsExperience   Int?
+  education         String?
+  bio               String?
+  consultationFee   Float?
+  availableHours    Json?    // Store availability schedule
+  verifiedDoctor    Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("doctor_profiles")
+}
