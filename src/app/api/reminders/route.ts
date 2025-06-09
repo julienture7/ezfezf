@@ -1,290 +1,76 @@
-import { type NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  getUserMedicationReminders,
+  createMedicationReminder,
+  MedicationReminderData
+} from '@/lib/api/reminders'
+import type { DayOfWeek } from '@prisma/client' // Import DayOfWeek if it's an enum
 
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { searchParams } = new URL(request.url)
-    const isActive = searchParams.get('isActive')
-    const date = searchParams.get('date')
-
-    const whereClause: any = {
-      userId: session.user.id
-    }
-
-    if (isActive !== null) {
-      whereClause.isActive = isActive === 'true'
-    }
-
-    let reminders = await prisma.medicationReminder.findMany({
-      where: whereClause,
-      include: {
-        medication: {
-          select: {
-            id: true,
-            name: true,
-            type: true,
-            description: true,
-          }
-        }
-      },
-      orderBy: {
-        createdAt: 'desc'
-      }
-    })
-
-    // Filter by date if provided
-    if (date) {
-      const targetDate = new Date(date)
-      reminders = reminders.filter(reminder => {
-        const reminderTimes = JSON.parse(reminder.reminderTimes)
-        return reminderTimes.some((time: string) => {
-          const reminderDateTime = new Date(targetDate)
-          const [hours, minutes] = time.split(':')
-          reminderDateTime.setHours(Number.parseInt(hours), Number.parseInt(minutes), 0, 0)
-          return reminderDateTime.toDateString() === targetDate.toDateString()
-        })
-      })
-    }
-
+    const reminders = await getUserMedicationReminders(session.user.id)
     return NextResponse.json(reminders)
   } catch (error) {
-    console.error('Error fetching reminders:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch reminders' },
-      { status: 500 }
-    )
+    console.error('Error fetching medication reminders:', error)
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred'
+    return NextResponse.json({ error: 'Failed to fetch medication reminders', details: errorMessage }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const data = await request.json()
-    const {
-      medicationId,
-      dosage,
-      frequency,
-      reminderTimes,
-      startDate,
-      endDate,
-      instructions,
-      isActive = true
-    } = data
+    const body = await request.json()
+    // Ensure body matches MedicationReminderData from src/lib/api/reminders.ts
+    const { userTreatmentId, reminderTime, daysOfWeek, isActive } = body as MedicationReminderData
 
-    // Validate required fields
-    if (!medicationId || !dosage || !frequency || !reminderTimes || !startDate) {
-      return NextResponse.json(
-        { error: 'Missing required fields: medicationId, dosage, frequency, reminderTimes, startDate' },
-        { status: 400 }
-      )
+    // Basic validation
+    if (!userTreatmentId || !reminderTime || !daysOfWeek || !Array.isArray(daysOfWeek) || daysOfWeek.length === 0) {
+      return NextResponse.json({ error: 'Missing or invalid required fields: userTreatmentId (string), reminderTime (string HH:mm), daysOfWeek (array)' }, { status: 400 })
     }
 
-    // Verify medication exists
-    const medication = await prisma.treatment.findUnique({
-      where: { id: medicationId }
-    })
-
-    if (!medication) {
-      return NextResponse.json(
-        { error: 'Medication not found' },
-        { status: 404 }
-      )
+    if (!/^\d{2}:\d{2}$/.test(reminderTime)) {
+        return NextResponse.json({ error: 'Invalid reminderTime format. Use HH:mm.' }, { status: 400 });
     }
 
-    // Create reminder
-    const reminder = await prisma.medicationReminder.create({
-      data: {
-        userId: session.user.id,
-        medicationId,
-        dosage,
-        frequency,
-        reminderTimes: JSON.stringify(reminderTimes),
-        startDate: new Date(startDate),
-        endDate: endDate ? new Date(endDate) : null,
-        instructions,
-        isActive,
-      },
-      include: {
-        medication: {
-          select: {
-            id: true,
-            name: true,
-            type: true,
-            description: true,
-          }
-        }
-      }
-    })
+    // Optional: Validate elements of daysOfWeek against DayOfWeek enum if not automatically handled
+    // For example:
+    // const validDays = Object.values(DayOfWeek);
+    // if (!daysOfWeek.every(day => validDays.includes(day))) {
+    //    return NextResponse.json({ error: 'Invalid values in daysOfWeek array' }, { status: 400 });
+    // }
 
-    return NextResponse.json(reminder, { status: 201 })
+
+    const reminderData: MedicationReminderData = {
+      userTreatmentId,
+      reminderTime,
+      daysOfWeek, // Prisma will validate enum values
+      isActive: isActive !== undefined ? isActive : true
+    }
+
+    const newReminder = await createMedicationReminder(session.user.id, reminderData)
+    return NextResponse.json(newReminder, { status: 201 })
   } catch (error) {
-    console.error('Error creating reminder:', error)
-    return NextResponse.json(
-      { error: 'Failed to create reminder' },
-      { status: 500 }
-    )
-  }
-}
-EOF  
-cd /home/project && cd ezfezf && cat > src/app/api/reminders/route.ts << 'EOF'
-import { type NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
-
-export async function GET(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    console.error('Error creating medication reminder:', error)
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred'
+    if (errorMessage.toLowerCase().includes('user treatment not found')) {
+      return NextResponse.json({ error: 'User treatment not found or does not belong to the user' }, { status: 404 })
     }
-
-    const { searchParams } = new URL(request.url)
-    const isActive = searchParams.get('isActive')
-    const date = searchParams.get('date')
-
-    const whereClause: any = {
-      userId: session.user.id
+    if (errorMessage.toLowerCase().includes('days of week must be provided')) {
+      return NextResponse.json({ error: errorMessage }, { status: 400 })
     }
-
-    if (isActive !== null) {
-      whereClause.isActive = isActive === 'true'
-    }
-
-    let reminders = await prisma.medicationReminder.findMany({
-      where: whereClause,
-      include: {
-        medication: {
-          select: {
-            id: true,
-            name: true,
-            type: true,
-            description: true,
-          }
-        }
-      },
-      orderBy: {
-        createdAt: 'desc'
-      }
-    })
-
-    // Filter by date if provided
-    if (date) {
-      const targetDate = new Date(date)
-      reminders = reminders.filter(reminder => {
-        const reminderTimes = JSON.parse(reminder.reminderTimes)
-        return reminderTimes.some((time: string) => {
-          const reminderDateTime = new Date(targetDate)
-          const [hours, minutes] = time.split(':')
-          reminderDateTime.setHours(Number.parseInt(hours), Number.parseInt(minutes), 0, 0)
-          return reminderDateTime.toDateString() === targetDate.toDateString()
-        })
-      })
-    }
-
-    return NextResponse.json(reminders)
-  } catch (error) {
-    console.error('Error fetching reminders:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch reminders' },
-      { status: 500 }
-    )
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const data = await request.json()
-    const {
-      medicationId,
-      dosage,
-      frequency,
-      reminderTimes,
-      startDate,
-      endDate,
-      instructions,
-      isActive = true
-    } = data
-
-    // Validate required fields
-    if (!medicationId || !dosage || !frequency || !reminderTimes || !startDate) {
-      return NextResponse.json(
-        { error: 'Missing required fields: medicationId, dosage, frequency, reminderTimes, startDate' },
-        { status: 400 }
-      )
-    }
-
-    // Verify medication exists
-    const medication = await prisma.treatment.findUnique({
-      where: { id: medicationId }
-    })
-
-    if (!medication) {
-      return NextResponse.json(
-        { error: 'Medication not found' },
-        { status: 404 }
-      )
-    }
-
-    // Create reminder
-    const reminder = await prisma.medicationReminder.create({
-      data: {
-        userId: session.user.id,
-        medicationId,
-        dosage,
-        frequency,
-        reminderTimes: JSON.stringify(reminderTimes),
-        startDate: new Date(startDate),
-        endDate: endDate ? new Date(endDate) : null,
-        instructions,
-        isActive,
-      },
-      include: {
-        medication: {
-          select: {
-            id: true,
-            name: true,
-            type: true,
-            description: true,
-          }
-        }
-      }
-    })
-
-    return NextResponse.json(reminder, { status: 201 })
-  } catch (error) {
-    console.error('Error creating reminder:', error)
-    return NextResponse.json(
-      { error: 'Failed to create reminder' },
-      { status: 500 }
-    )
+    // Handle Prisma validation errors for enum if they occur, e.g. P2003 or specific validation errors
+    return NextResponse.json({ error: 'Failed to create medication reminder', details: errorMessage }, { status: 500 })
   }
 }

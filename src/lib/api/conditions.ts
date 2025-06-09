@@ -82,6 +82,33 @@ export async function getUserConditions(userId: string) {
   }
 }
 
+// Get a specific user condition by ID
+export async function getUserConditionById(userConditionId: string, userId: string) {
+  try {
+    const userCondition = await prisma.userCondition.findFirst({
+      where: {
+        id: userConditionId,
+        userId: userId
+      },
+      include: {
+        condition: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            category: true,
+            symptoms: true
+          }
+        }
+      }
+    })
+    return userCondition
+  } catch (error) {
+    console.error('Error fetching user condition by ID:', error)
+    throw new Error('Failed to fetch user condition by ID')
+  }
+}
+
 // Add a condition for a user
 export async function addUserCondition(userId: string, conditionData: UserConditionData) {
   try {
@@ -114,16 +141,29 @@ export async function addUserCondition(userId: string, conditionData: UserCondit
 }
 
 // Update a user condition
-export async function updateUserCondition(userConditionId: string, updates: Partial<{
+export async function updateUserCondition(userConditionId: string, userId: string, updates: Partial<{
   diagnosedDate: Date | null
   severity: string | null
   notes: string | null
   isActive: boolean
 }>) {
   try {
+    // First, verify the condition belongs to the user
+    const existingCondition = await prisma.userCondition.findFirst({
+      where: {
+        id: userConditionId,
+        userId: userId
+      }
+    });
+
+    if (!existingCondition) {
+      throw new Error('User condition not found or user not authorized');
+    }
+
     const userCondition = await prisma.userCondition.update({
       where: {
         id: userConditionId
+        // No need to check userId here again as we've already verified ownership
       },
       data: updates,
       include: {
@@ -146,11 +186,24 @@ export async function updateUserCondition(userConditionId: string, updates: Part
 }
 
 // Delete a user condition
-export async function deleteUserCondition(userConditionId: string) {
+export async function deleteUserCondition(userConditionId: string, userId: string) {
   try {
+    // First, verify the condition belongs to the user
+    const existingCondition = await prisma.userCondition.findFirst({
+      where: {
+        id: userConditionId,
+        userId: userId
+      }
+    });
+
+    if (!existingCondition) {
+      throw new Error('User condition not found or user not authorized');
+    }
+
     await prisma.userCondition.delete({
       where: {
         id: userConditionId
+        // No need to check userId here again as we've already verified ownership
       }
     })
   } catch (error) {

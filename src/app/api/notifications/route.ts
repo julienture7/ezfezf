@@ -1,274 +1,85 @@
-import { type NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  getUserNotifications,
+  createNotification,
+  NotificationData
+} from '@/lib/api/notifications'
+import type { NotificationType } from '@prisma/client'
 
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { searchParams } = new URL(request.url)
-    const isRead = searchParams.get('isRead')
-    const type = searchParams.get('type')
-    const limit = Number.parseInt(searchParams.get('limit') || '50')
-    const offset = Number.parseInt(searchParams.get('offset') || '0')
+    const { searchParams } = request.nextUrl
+    const isReadStr = searchParams.get('isRead')
+    const type = searchParams.get('type') as NotificationType | null // Cast to NotificationType or null
 
-    const whereClause: any = {
-      userId: session.user.id
+    const filters: { isRead?: boolean; type?: NotificationType } = {}
+    if (isReadStr !== null) { // Check for null, as 'false' is a valid string value
+      filters.isRead = isReadStr.toLowerCase() === 'true'
     }
-
-    if (isRead !== null) {
-      whereClause.isRead = isRead === 'true'
-    }
-
     if (type) {
-      whereClause.type = type
+      // Basic validation for NotificationType enum can be added here if needed
+      // e.g. if (!Object.values(NotificationType).includes(type)) { ... return 400 ... }
+      filters.type = type
     }
 
-    const notifications = await prisma.notification.findMany({
-      where: whereClause,
-      orderBy: {
-        createdAt: 'desc'
-      },
-      take: limit,
-      skip: offset
-    })
-
-    // Get total count for pagination
-    const totalCount = await prisma.notification.count({
-      where: whereClause
-    })
-
-    // Get unread count
-    const unreadCount = await prisma.notification.count({
-      where: {
-        userId: session.user.id,
-        isRead: false
-      }
-    })
-
-    return NextResponse.json({
-      notifications,
-      pagination: {
-        total: totalCount,
-        limit,
-        offset,
-        hasMore: offset + limit < totalCount
-      },
-      unreadCount
-    })
+    const notifications = await getUserNotifications(session.user.id, filters)
+    return NextResponse.json(notifications)
   } catch (error) {
     console.error('Error fetching notifications:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch notifications' },
-      { status: 500 }
-    )
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred'
+    return NextResponse.json({ error: 'Failed to fetch notifications', details: errorMessage }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Only allow admins to create notifications for other users
-    if (session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Forbidden - Admin only' },
-        { status: 403 }
-      )
-    }
+    // Per subtask: "Consider admin-only... For now, allow authenticated users"
+    // If admin-only, add role check:
+    // if (session.user.role !== 'ADMIN') {
+    //   return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    // }
 
-    const data = await request.json()
-    const { userId, title, content, type, referenceId } = data
+    const body = await request.json()
+    // NotificationData interface in src/lib/api/notifications.ts expects userId.
+    // This userId is the recipient of the notification.
+    const { userId, title, content, type, referenceId } = body as NotificationData
 
-    // Validate required fields
     if (!userId || !title || !content || !type) {
-      return NextResponse.json(
-        { error: 'Missing required fields: userId, title, content, type' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Missing required fields: userId, title, content, type' }, { status: 400 })
+    }
+    // Add any other specific validation for type, title length, content length etc.
+    // Example: if (!Object.values(NotificationType).includes(type)) { ... return 400 ... }
+
+
+    const notificationData: NotificationData = {
+      userId, // The user for whom this notification is intended
+      title,
+      content,
+      type,
+      referenceId: referenceId || undefined
     }
 
-    // Verify user exists
-    const user = await prisma.user.findUnique({
-      where: { id: userId }
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      )
-    }
-
-    // Create notification
-    const notification = await prisma.notification.create({
-      data: {
-        userId,
-        title,
-        content,
-        type,
-        referenceId,
-        isRead: false,
-      }
-    })
-
-    return NextResponse.json(notification, { status: 201 })
+    // createNotification from the lib handles the actual creation.
+    const newNotification = await createNotification(notificationData)
+    return NextResponse.json(newNotification, { status: 201 })
   } catch (error) {
     console.error('Error creating notification:', error)
-    return NextResponse.json(
-      { error: 'Failed to create notification' },
-      { status: 500 }
-    )
-  }
-}
-EOF  
-cd /home/project && cd ezfezf && cat > src/app/api/notifications/route.ts << 'EOF'
-import { type NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
-
-export async function GET(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred'
+    if (errorMessage.toLowerCase().includes('user with id') && errorMessage.toLowerCase().includes('not found')) {
+        return NextResponse.json({ error: errorMessage }, { status: 404 });
     }
-
-    const { searchParams } = new URL(request.url)
-    const isRead = searchParams.get('isRead')
-    const type = searchParams.get('type')
-    const limit = Number.parseInt(searchParams.get('limit') || '50')
-    const offset = Number.parseInt(searchParams.get('offset') || '0')
-
-    const whereClause: any = {
-      userId: session.user.id
-    }
-
-    if (isRead !== null) {
-      whereClause.isRead = isRead === 'true'
-    }
-
-    if (type) {
-      whereClause.type = type
-    }
-
-    const notifications = await prisma.notification.findMany({
-      where: whereClause,
-      orderBy: {
-        createdAt: 'desc'
-      },
-      take: limit,
-      skip: offset
-    })
-
-    // Get total count for pagination
-    const totalCount = await prisma.notification.count({
-      where: whereClause
-    })
-
-    // Get unread count
-    const unreadCount = await prisma.notification.count({
-      where: {
-        userId: session.user.id,
-        isRead: false
-      }
-    })
-
-    return NextResponse.json({
-      notifications,
-      pagination: {
-        total: totalCount,
-        limit,
-        offset,
-        hasMore: offset + limit < totalCount
-      },
-      unreadCount
-    })
-  } catch (error) {
-    console.error('Error fetching notifications:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch notifications' },
-      { status: 500 }
-    )
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    // Only allow admins to create notifications for other users
-    if (session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Forbidden - Admin only' },
-        { status: 403 }
-      )
-    }
-
-    const data = await request.json()
-    const { userId, title, content, type, referenceId } = data
-
-    // Validate required fields
-    if (!userId || !title || !content || !type) {
-      return NextResponse.json(
-        { error: 'Missing required fields: userId, title, content, type' },
-        { status: 400 }
-      )
-    }
-
-    // Verify user exists
-    const user = await prisma.user.findUnique({
-      where: { id: userId }
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      )
-    }
-
-    // Create notification
-    const notification = await prisma.notification.create({
-      data: {
-        userId,
-        title,
-        content,
-        type,
-        referenceId,
-        isRead: false,
-      }
-    })
-
-    return NextResponse.json(notification, { status: 201 })
-  } catch (error) {
-    console.error('Error creating notification:', error)
-    return NextResponse.json(
-      { error: 'Failed to create notification' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to create notification', details: errorMessage }, { status: 500 })
   }
 }

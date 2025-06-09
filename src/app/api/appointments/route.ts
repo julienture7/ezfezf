@@ -1,444 +1,87 @@
-import { type NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  getUserAppointments,
+  createAppointment,
+  AppointmentData
+} from '@/lib/api/appointments'
+import type { AppointmentStatus } from '@prisma/client'
 
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (!session?.user?.id || !session.user.role) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { searchParams } = new URL(request.url)
-    const status = searchParams.get('status')
+    const status = searchParams.get('status') as AppointmentStatus | null
     const doctorId = searchParams.get('doctorId')
+    const startDateStr = searchParams.get('startDate')
+    const endDateStr = searchParams.get('endDate')
 
-    const whereClause: any = {}
-    
-    // Filter based on user role
-    if (session.user.role === 'PATIENT') {
-      whereClause.patientId = session.user.id
-    } else if (session.user.role === 'DOCTOR') {
-      whereClause.doctorId = session.user.id
-    } else if (session.user.role === 'ADMIN') {
-      // Admin can see all appointments
-    } else {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
-    }
+    const filters: {
+      status?: AppointmentStatus;
+      doctorId?: string;
+      startDate?: Date;
+      endDate?: Date;
+    } = {}
+    if (status) filters.status = status
+    if (doctorId) filters.doctorId = doctorId
+    if (startDateStr) filters.startDate = new Date(startDateStr)
+    if (endDateStr) filters.endDate = new Date(endDateStr)
 
-    // Add additional filters
-    if (status) {
-      whereClause.status = status
-    }
-    if (doctorId && session.user.role !== 'DOCTOR') {
-      whereClause.doctorId = doctorId
-    }
-
-    const appointments = await prisma.appointment.findMany({
-      where: whereClause,
-      include: {
-        patient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-          }
-        },
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            doctorProfile: {
-              select: {
-                specialization: true,
-                clinicAddress: true,
-              }
-            }
-          }
-        }
-      },
-      orderBy: {
-        appointmentDate: 'asc'
-      }
-    })
-
+    const appointments = await getUserAppointments(session.user.id, session.user.role, filters)
     return NextResponse.json(appointments)
   } catch (error) {
     console.error('Error fetching appointments:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch appointments' },
-      { status: 500 }
-    )
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred'
+    if (errorMessage === 'Unauthorized') {
+        return NextResponse.json({ error: 'Unauthorized to view these appointments' }, { status: 403 })
+    }
+    return NextResponse.json({ error: 'Failed to fetch appointments', details: errorMessage }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (!session?.user?.id) {
+      // Role check can be implicitly handled by createAppointment or add explicit check if needed
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const data = await request.json()
-    const {
-      doctorId,
-      title,
-      description,
-      appointmentDate,
-      durationMinutes = 30,
-      location,
-      type = 'IN_PERSON',
-      notes
-    } = data
+    const data = (await request.json()) as AppointmentData
 
-    // Validate required fields
-    if (!doctorId || !title || !appointmentDate) {
-      return NextResponse.json(
-        { error: 'Missing required fields: doctorId, title, appointmentDate' },
-        { status: 400 }
-      )
+    if (!data.doctorId || !data.appointmentDate || !data.title) {
+      return NextResponse.json({ error: 'Missing required appointment data: doctorId, appointmentDate, and title are required.' }, { status: 400 })
     }
-
-    // Verify doctor exists and is actually a doctor
-    const doctor = await prisma.user.findFirst({
-      where: {
-        id: doctorId,
-        role: 'DOCTOR'
-      }
-    })
-
-    if (!doctor) {
-      return NextResponse.json(
-        { error: 'Doctor not found' },
-        { status: 404 }
-      )
-    }
-
-    // Check for conflicts (same doctor, overlapping time)
-    const appointmentDateTime = new Date(appointmentDate)
-    const endTime = new Date(appointmentDateTime.getTime() + (durationMinutes * 60000))
-
-    const conflictingAppointment = await prisma.appointment.findFirst({
-      where: {
-        doctorId,
-        status: {
-          in: ['SCHEDULED', 'CONFIRMED']
-        },
-        AND: [
-          {
-            appointmentDate: {
-              lt: endTime
-            }
-          },
-          {
-            appointmentDate: {
-              gte: new Date(appointmentDateTime.getTime() - (30 * 60000)) // 30 min buffer
-            }
-          }
-        ]
-      }
-    })
-
-    if (conflictingAppointment) {
-      return NextResponse.json(
-        { error: 'Doctor is not available at this time' },
-        { status: 409 }
-      )
-    }
-
-    // Create appointment
-    const appointment = await prisma.appointment.create({
-      data: {
-        patientId: session.user.id,
-        doctorId,
-        title,
-        description,
-        appointmentDate: appointmentDateTime,
-        durationMinutes,
-        location,
-        type,
-        notes,
-        status: 'SCHEDULED'
-      },
-      include: {
-        patient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-          }
-        },
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            doctorProfile: {
-              select: {
-                specialization: true,
-                clinicAddress: true,
-              }
-            }
-          }
-        }
-      }
-    })
-
-    // Create notification for doctor
-    await prisma.notification.create({
-      data: {
-        userId: doctorId,
-        title: 'New Appointment Request',
-        content: `New appointment request from ${session.user.fullName} for ${title}`,
-        type: 'appointment',
-        referenceId: appointment.id,
-      }
-    })
-
-    return NextResponse.json(appointment, { status: 201 })
-  } catch (error) {
-    console.error('Error creating appointment:', error)
-    return NextResponse.json(
-      { error: 'Failed to create appointment' },
-      { status: 500 }
-    )
-  }
-}
-EOF  
-cd /home/project && cd ezfezf && cat > src/app/api/appointments/route.ts << 'EOF'
-import { type NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
-
-export async function GET(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const { searchParams } = new URL(request.url)
-    const status = searchParams.get('status')
-    const doctorId = searchParams.get('doctorId')
-
-    const whereClause: any = {}
     
-    // Filter based on user role
-    if (session.user.role === 'PATIENT') {
-      whereClause.patientId = session.user.id
-    } else if (session.user.role === 'DOCTOR') {
-      whereClause.doctorId = session.user.id
-    } else if (session.user.role === 'ADMIN') {
-      // Admin can see all appointments
-    } else {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
+    if (isNaN(new Date(data.appointmentDate).getTime())) {
+      return NextResponse.json({ error: 'Invalid appointmentDate format.' }, { status: 400 });
     }
 
-    // Add additional filters
-    if (status) {
-      whereClause.status = status
-    }
-    if (doctorId && session.user.role !== 'DOCTOR') {
-      whereClause.doctorId = doctorId
-    }
-
-    const appointments = await prisma.appointment.findMany({
-      where: whereClause,
-      include: {
-        patient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-          }
-        },
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            doctorProfile: {
-              select: {
-                specialization: true,
-                clinicAddress: true,
-              }
-            }
-          }
-        }
-      },
-      orderBy: {
-        appointmentDate: 'asc'
-      }
-    })
-
-    return NextResponse.json(appointments)
-  } catch (error) {
-    console.error('Error fetching appointments:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch appointments' },
-      { status: 500 }
-    )
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const data = await request.json()
-    const {
-      doctorId,
-      title,
-      description,
-      appointmentDate,
-      durationMinutes = 30,
-      location,
-      type = 'IN_PERSON',
-      notes
-    } = data
-
-    // Validate required fields
-    if (!doctorId || !title || !appointmentDate) {
-      return NextResponse.json(
-        { error: 'Missing required fields: doctorId, title, appointmentDate' },
-        { status: 400 }
-      )
-    }
-
-    // Verify doctor exists and is actually a doctor
-    const doctor = await prisma.user.findFirst({
-      where: {
-        id: doctorId,
-        role: 'DOCTOR'
-      }
-    })
-
-    if (!doctor) {
-      return NextResponse.json(
-        { error: 'Doctor not found' },
-        { status: 404 }
-      )
-    }
-
-    // Check for conflicts (same doctor, overlapping time)
-    const appointmentDateTime = new Date(appointmentDate)
-    const endTime = new Date(appointmentDateTime.getTime() + (durationMinutes * 60000))
-
-    const conflictingAppointment = await prisma.appointment.findFirst({
-      where: {
-        doctorId,
-        status: {
-          in: ['SCHEDULED', 'CONFIRMED']
-        },
-        AND: [
-          {
-            appointmentDate: {
-              lt: endTime
-            }
-          },
-          {
-            appointmentDate: {
-              gte: new Date(appointmentDateTime.getTime() - (30 * 60000)) // 30 min buffer
-            }
-          }
-        ]
-      }
-    })
-
-    if (conflictingAppointment) {
-      return NextResponse.json(
-        { error: 'Doctor is not available at this time' },
-        { status: 409 }
-      )
-    }
-
-    // Create appointment
-    const appointment = await prisma.appointment.create({
-      data: {
-        patientId: session.user.id,
-        doctorId,
-        title,
-        description,
-        appointmentDate: appointmentDateTime,
-        durationMinutes,
-        location,
-        type,
-        notes,
-        status: 'SCHEDULED'
-      },
-      include: {
-        patient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-          }
-        },
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            doctorProfile: {
-              select: {
-                specialization: true,
-                clinicAddress: true,
-              }
-            }
-          }
-        }
-      }
-    })
-
-    // Create notification for doctor
-    await prisma.notification.create({
-      data: {
-        userId: doctorId,
-        title: 'New Appointment Request',
-        content: `New appointment request from ${session.user.fullName} for ${title}`,
-        type: 'appointment',
-        referenceId: appointment.id,
-      }
-    })
-
-    return NextResponse.json(appointment, { status: 201 })
+    // Assuming createAppointment takes patientId as the first argument
+    const newAppointment = await createAppointment(session.user.id, data)
+    return NextResponse.json(newAppointment, { status: 201 })
   } catch (error) {
     console.error('Error creating appointment:', error)
-    return NextResponse.json(
-      { error: 'Failed to create appointment' },
-      { status: 500 }
-    )
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred'
+
+    if (errorMessage.toLowerCase().includes('doctor not found')) {
+      return NextResponse.json({ error: 'Doctor not found' }, { status: 404 })
+    }
+    if (errorMessage.toLowerCase().includes('doctor is not available at this time') || errorMessage.toLowerCase().includes('conflict')) {
+      return NextResponse.json({ error: 'Appointment conflict: Doctor is not available at this time' }, { status: 409 })
+    }
+    // It's good practice to check session.user.role if only specific roles can create appointments.
+    // For example, if only 'PATIENT' role can create an appointment for themselves:
+    // if (session.user.role !== 'PATIENT') {
+    //   return NextResponse.json({ error: 'Forbidden: Only patients can create appointments.' }, { status: 403 });
+    // }
+    // However, createAppointment itself might handle this logic internally based on patientId.
+
+    return NextResponse.json({ error: 'Failed to create appointment', details: errorMessage }, { status: 500 })
   }
 }

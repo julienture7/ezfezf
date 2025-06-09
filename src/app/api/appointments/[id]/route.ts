@@ -1,620 +1,107 @@
-import { type NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  getAppointmentById,
+  updateAppointment,
+  cancelAppointment,
+  AppointmentUpdateData // Ensure this is imported if not already
+} from '@/lib/api/appointments'
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (!session?.user?.id || !session.user.role) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { id } = params
-
-    const appointment = await prisma.appointment.findUnique({
-      where: { id },
-      include: {
-        patient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-          }
-        },
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            doctorProfile: {
-              select: {
-                specialization: true,
-                clinicAddress: true,
-              }
-            }
-          }
-        }
-      }
-    })
-
-    if (!appointment) {
-      return NextResponse.json(
-        { error: 'Appointment not found' },
-        { status: 404 }
-      )
+    if (!id) {
+      return NextResponse.json({ error: 'Appointment ID is required' }, { status: 400 })
     }
 
-    // Check if user has access to this appointment
-    const hasAccess = 
-      session.user.role === 'ADMIN' ||
-      appointment.patientId === session.user.id ||
-      appointment.doctorId === session.user.id
+    const appointment = await getAppointmentById(id, session.user.id, session.user.role)
 
-    if (!hasAccess) {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
+    if (!appointment) {
+      // getAppointmentById returns null if not found or user is not authorized.
+      return NextResponse.json({ error: 'Appointment not found or access denied' }, { status: 404 })
     }
 
     return NextResponse.json(appointment)
   } catch (error) {
-    console.error('Error fetching appointment:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch appointment' },
-      { status: 500 }
-    )
+    console.error('Error fetching appointment by ID:', error)
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred'
+    // Check if the error from the lib is "Failed to fetch appointment" which is generic
+    // The more specific error handling (404) is handled by the null check above
+    return NextResponse.json({ error: 'Failed to fetch appointment', details: errorMessage }, { status: 500 })
   }
 }
 
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (!session?.user?.id || !session.user.role) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { id } = params
-    const data = await request.json()
-
-    // Get existing appointment
-    const existingAppointment = await prisma.appointment.findUnique({
-      where: { id }
-    })
-
-    if (!existingAppointment) {
-      return NextResponse.json(
-        { error: 'Appointment not found' },
-        { status: 404 }
-      )
+    if (!id) {
+      return NextResponse.json({ error: 'Appointment ID is required' }, { status: 400 })
     }
 
-    // Check if user has permission to update
-    const canUpdate = 
-      session.user.role === 'ADMIN' ||
-      existingAppointment.patientId === session.user.id ||
-      existingAppointment.doctorId === session.user.id
+    const data = (await request.json()) as AppointmentUpdateData
 
-    if (!canUpdate) {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
+    if (Object.keys(data).length === 0) {
+        return NextResponse.json({ error: 'No update data provided' }, { status: 400 });
     }
-
-    const {
-      title,
-      description,
-      appointmentDate,
-      durationMinutes,
-      status,
-      location,
-      type,
-      notes
-    } = data
-
-    // If updating appointment date, check for conflicts
-    if (appointmentDate && appointmentDate !== existingAppointment.appointmentDate) {
-      const appointmentDateTime = new Date(appointmentDate)
-      const duration = durationMinutes || existingAppointment.durationMinutes
-      const endTime = new Date(appointmentDateTime.getTime() + (duration * 60000))
-
-      const conflictingAppointment = await prisma.appointment.findFirst({
-        where: {
-          id: { not: id },
-          doctorId: existingAppointment.doctorId,
-          status: {
-            in: ['SCHEDULED', 'CONFIRMED']
-          },
-          AND: [
-            {
-              appointmentDate: {
-                lt: endTime
-              }
-            },
-            {
-              appointmentDate: {
-                gte: new Date(appointmentDateTime.getTime() - (30 * 60000))
-              }
-            }
-          ]
-        }
-      })
-
-      if (conflictingAppointment) {
-        return NextResponse.json(
-          { error: 'Doctor is not available at this time' },
-          { status: 409 }
-        )
-      }
+    if (data.appointmentDate && typeof data.appointmentDate === 'string' && isNaN(new Date(data.appointmentDate).getTime())) {
+        return NextResponse.json({ error: 'Invalid appointmentDate format.' }, { status: 400 });
     }
+    // Add other validations for data fields as necessary, e.g. status enum check
 
-    // Update appointment
-    const updatedAppointment = await prisma.appointment.update({
-      where: { id },
-      data: {
-        ...(title && { title }),
-        ...(description !== undefined && { description }),
-        ...(appointmentDate && { appointmentDate: new Date(appointmentDate) }),
-        ...(durationMinutes && { durationMinutes }),
-        ...(status && { status }),
-        ...(location !== undefined && { location }),
-        ...(type && { type }),
-        ...(notes !== undefined && { notes }),
-        updatedAt: new Date(),
-      },
-      include: {
-        patient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-          }
-        },
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            doctorProfile: {
-              select: {
-                specialization: true,
-                clinicAddress: true,
-              }
-            }
-          }
-        }
-      }
-    })
-
-    // Create notification for status changes
-    if (status && status !== existingAppointment.status) {
-      const notificationUserId = session.user.id === existingAppointment.patientId 
-        ? existingAppointment.doctorId 
-        : existingAppointment.patientId
-
-      if (notificationUserId) {
-        await prisma.notification.create({
-          data: {
-            userId: notificationUserId,
-            title: 'Appointment Updated',
-            content: `Appointment "${title || existingAppointment.title}" status changed to ${status}`,
-            type: 'appointment',
-            referenceId: id,
-          }
-        })
-      }
-    }
-
+    const updatedAppointment = await updateAppointment(id, session.user.id, session.user.role, data)
     return NextResponse.json(updatedAppointment)
   } catch (error) {
     console.error('Error updating appointment:', error)
-    return NextResponse.json(
-      { error: 'Failed to update appointment' },
-      { status: 500 }
-    )
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred'
+    if (errorMessage.toLowerCase().includes('forbidden')) {
+      return NextResponse.json({ error: 'Forbidden: You do not have permission to update this appointment.' }, { status: 403 })
+    }
+    if (errorMessage.toLowerCase().includes('not found')) {
+      return NextResponse.json({ error: 'Appointment not found' }, { status: 404 })
+    }
+    if (errorMessage.toLowerCase().includes('doctor is not available at this time') || errorMessage.toLowerCase().includes('conflict')) {
+      return NextResponse.json({ error: 'Appointment conflict: Doctor is not available at this time' }, { status: 409 })
+    }
+    return NextResponse.json({ error: 'Failed to update appointment', details: errorMessage }, { status: 500 })
   }
 }
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (!session?.user?.id || !session.user.role) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const { id } = params
-
-    const appointment = await prisma.appointment.findUnique({
-      where: { id }
-    })
-
-    if (!appointment) {
-      return NextResponse.json(
-        { error: 'Appointment not found' },
-        { status: 404 }
-      )
+    if (!id) {
+      return NextResponse.json({ error: 'Appointment ID is required' }, { status: 400 })
     }
 
-    // Check if user has permission to delete
-    const canDelete = 
-      session.user.role === 'ADMIN' ||
-      appointment.patientId === session.user.id ||
-      appointment.doctorId === session.user.id
+    await cancelAppointment(id, session.user.id, session.user.role)
 
-    if (!canDelete) {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
-    }
-
-    // Update status to cancelled instead of deleting
-    const updatedAppointment = await prisma.appointment.update({
-      where: { id },
-      data: {
-        status: 'CANCELLED',
-        updatedAt: new Date(),
-      }
-    })
-
-    // Create notification
-    const notificationUserId = session.user.id === appointment.patientId 
-      ? appointment.doctorId 
-      : appointment.patientId
-
-    if (notificationUserId) {
-      await prisma.notification.create({
-        data: {
-          userId: notificationUserId,
-          title: 'Appointment Cancelled',
-          content: `Appointment "${appointment.title}" has been cancelled`,
-          type: 'appointment',
-          referenceId: id,
-        }
-      })
-    }
-
-    return NextResponse.json({ message: 'Appointment cancelled successfully' })
+    // Return 204 No Content on successful cancellation (which is an update to 'CANCELLED')
+    return new NextResponse(null, { status: 204 })
   } catch (error) {
     console.error('Error cancelling appointment:', error)
-    return NextResponse.json(
-      { error: 'Failed to cancel appointment' },
-      { status: 500 }
-    )
-  }
-}
-EOF  
-cd /home/project && cd ezfezf && cat > "src/app/api/appointments/[id]/route.ts" << 'EOF'
-import { type NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
-
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred'
+    if (errorMessage.toLowerCase().includes('forbidden')) {
+      return NextResponse.json({ error: 'Forbidden: You do not have permission to cancel this appointment.' }, { status: 403 })
     }
-
-    const { id } = params
-
-    const appointment = await prisma.appointment.findUnique({
-      where: { id },
-      include: {
-        patient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-          }
-        },
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            doctorProfile: {
-              select: {
-                specialization: true,
-                clinicAddress: true,
-              }
-            }
-          }
-        }
-      }
-    })
-
-    if (!appointment) {
-      return NextResponse.json(
-        { error: 'Appointment not found' },
-        { status: 404 }
-      )
+    if (errorMessage.toLowerCase().includes('not found')) {
+      return NextResponse.json({ error: 'Appointment not found' }, { status: 404 })
     }
-
-    // Check if user has access to this appointment
-    const hasAccess = 
-      session.user.role === 'ADMIN' ||
-      appointment.patientId === session.user.id ||
-      appointment.doctorId === session.user.id
-
-    if (!hasAccess) {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
-    }
-
-    return NextResponse.json(appointment)
-  } catch (error) {
-    console.error('Error fetching appointment:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch appointment' },
-      { status: 500 }
-    )
-  }
-}
-
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const { id } = params
-    const data = await request.json()
-
-    // Get existing appointment
-    const existingAppointment = await prisma.appointment.findUnique({
-      where: { id }
-    })
-
-    if (!existingAppointment) {
-      return NextResponse.json(
-        { error: 'Appointment not found' },
-        { status: 404 }
-      )
-    }
-
-    // Check if user has permission to update
-    const canUpdate = 
-      session.user.role === 'ADMIN' ||
-      existingAppointment.patientId === session.user.id ||
-      existingAppointment.doctorId === session.user.id
-
-    if (!canUpdate) {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
-    }
-
-    const {
-      title,
-      description,
-      appointmentDate,
-      durationMinutes,
-      status,
-      location,
-      type,
-      notes
-    } = data
-
-    // If updating appointment date, check for conflicts
-    if (appointmentDate && appointmentDate !== existingAppointment.appointmentDate) {
-      const appointmentDateTime = new Date(appointmentDate)
-      const duration = durationMinutes || existingAppointment.durationMinutes
-      const endTime = new Date(appointmentDateTime.getTime() + (duration * 60000))
-
-      const conflictingAppointment = await prisma.appointment.findFirst({
-        where: {
-          id: { not: id },
-          doctorId: existingAppointment.doctorId,
-          status: {
-            in: ['SCHEDULED', 'CONFIRMED']
-          },
-          AND: [
-            {
-              appointmentDate: {
-                lt: endTime
-              }
-            },
-            {
-              appointmentDate: {
-                gte: new Date(appointmentDateTime.getTime() - (30 * 60000))
-              }
-            }
-          ]
-        }
-      })
-
-      if (conflictingAppointment) {
-        return NextResponse.json(
-          { error: 'Doctor is not available at this time' },
-          { status: 409 }
-        )
-      }
-    }
-
-    // Update appointment
-    const updatedAppointment = await prisma.appointment.update({
-      where: { id },
-      data: {
-        ...(title && { title }),
-        ...(description !== undefined && { description }),
-        ...(appointmentDate && { appointmentDate: new Date(appointmentDate) }),
-        ...(durationMinutes && { durationMinutes }),
-        ...(status && { status }),
-        ...(location !== undefined && { location }),
-        ...(type && { type }),
-        ...(notes !== undefined && { notes }),
-        updatedAt: new Date(),
-      },
-      include: {
-        patient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-          }
-        },
-        doctor: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            doctorProfile: {
-              select: {
-                specialization: true,
-                clinicAddress: true,
-              }
-            }
-          }
-        }
-      }
-    })
-
-    // Create notification for status changes
-    if (status && status !== existingAppointment.status) {
-      const notificationUserId = session.user.id === existingAppointment.patientId 
-        ? existingAppointment.doctorId 
-        : existingAppointment.patientId
-
-      if (notificationUserId) {
-        await prisma.notification.create({
-          data: {
-            userId: notificationUserId,
-            title: 'Appointment Updated',
-            content: `Appointment "${title || existingAppointment.title}" status changed to ${status}`,
-            type: 'appointment',
-            referenceId: id,
-          }
-        })
-      }
-    }
-
-    return NextResponse.json(updatedAppointment)
-  } catch (error) {
-    console.error('Error updating appointment:', error)
-    return NextResponse.json(
-      { error: 'Failed to update appointment' },
-      { status: 500 }
-    )
-  }
-}
-
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const { id } = params
-
-    const appointment = await prisma.appointment.findUnique({
-      where: { id }
-    })
-
-    if (!appointment) {
-      return NextResponse.json(
-        { error: 'Appointment not found' },
-        { status: 404 }
-      )
-    }
-
-    // Check if user has permission to delete
-    const canDelete = 
-      session.user.role === 'ADMIN' ||
-      appointment.patientId === session.user.id ||
-      appointment.doctorId === session.user.id
-
-    if (!canDelete) {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
-    }
-
-    // Update status to cancelled instead of deleting
-    const updatedAppointment = await prisma.appointment.update({
-      where: { id },
-      data: {
-        status: 'CANCELLED',
-        updatedAt: new Date(),
-      }
-    })
-
-    // Create notification
-    const notificationUserId = session.user.id === appointment.patientId 
-      ? appointment.doctorId 
-      : appointment.patientId
-
-    if (notificationUserId) {
-      await prisma.notification.create({
-        data: {
-          userId: notificationUserId,
-          title: 'Appointment Cancelled',
-          content: `Appointment "${appointment.title}" has been cancelled`,
-          type: 'appointment',
-          referenceId: id,
-        }
-      })
-    }
-
-    return NextResponse.json({ message: 'Appointment cancelled successfully' })
-  } catch (error) {
-    console.error('Error cancelling appointment:', error)
-    return NextResponse.json(
-      { error: 'Failed to cancel appointment' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to cancel appointment', details: errorMessage }, { status: 500 })
   }
 }

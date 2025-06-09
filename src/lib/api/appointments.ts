@@ -113,6 +113,53 @@ export async function getUserAppointments(
   })
 }
 
+// Get a specific appointment by ID
+export async function getAppointmentById(appointmentId: string, userId: string, userRole: string) {
+  try {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            image: true,
+          }
+        },
+        doctor: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            image: true,
+            doctorProfile: {
+              select: {
+                specialization: true,
+                clinicAddress: true,
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!appointment) {
+      return null; // Or throw new Error('Appointment not found')
+    }
+
+    // Verify authorization
+    if (userRole === 'ADMIN' || appointment.patientId === userId || appointment.doctorId === userId) {
+      return appointment;
+    } else {
+      return null; // Not authorized or not found for this user
+    }
+  } catch (error) {
+    console.error(`Error fetching appointment ${appointmentId}:`, error);
+    throw new Error('Failed to fetch appointment');
+  }
+}
+
 // Create a new appointment
 export async function createAppointment(patientId: string, data: AppointmentData) {
   // Verify doctor exists and is actually a doctor

@@ -1,336 +1,87 @@
-import { type NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
+import {
+  getConversations,
+  sendMessage,
+  MessageData,
+  getMessages
+} from '@/lib/api/messages'
 
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { searchParams } = new URL(request.url)
+    const { searchParams } = request.nextUrl
     const conversationWith = searchParams.get('conversationWith')
-    const limit = Number.parseInt(searchParams.get('limit') || '50')
-    const offset = Number.parseInt(searchParams.get('offset') || '0')
+    const limitStr = searchParams.get('limit')
+    const offsetStr = searchParams.get('offset')
 
-    let whereClause: any = {
-      OR: [
-        { senderId: session.user.id },
-        { recipientId: session.user.id }
-      ]
-    }
-
-    // Filter by conversation partner if specified
     if (conversationWith) {
-      whereClause = {
-        OR: [
-          {
-            senderId: session.user.id,
-            recipientId: conversationWith
-          },
-          {
-            senderId: conversationWith,
-            recipientId: session.user.id
-          }
-        ]
+      const limit = limitStr ? parseInt(limitStr, 10) : 50 // Default limit 50
+      const offset = offsetStr ? parseInt(offsetStr, 10) : 0 // Default offset 0
+
+      if (isNaN(limit) || limit < 1 || limit > 200) {
+        return NextResponse.json({ error: 'Invalid limit value (1-200)' }, { status: 400 })
       }
+      if (isNaN(offset) || offset < 0) {
+        return NextResponse.json({ error: 'Invalid offset value' }, { status: 400 })
+      }
+      const messages = await getMessages(session.user.id, conversationWith, limit, offset)
+      return NextResponse.json(messages)
+    } else {
+      const conversations = await getConversations(session.user.id)
+      return NextResponse.json(conversations)
     }
-
-    const messages = await prisma.message.findMany({
-      where: whereClause,
-      include: {
-        sender: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            role: true,
-          }
-        },
-        recipient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            role: true,
-          }
-        }
-      },
-      orderBy: {
-        createdAt: 'desc'
-      },
-      take: limit,
-      skip: offset
-    })
-
-    return NextResponse.json(messages)
   } catch (error) {
-    console.error('Error fetching messages:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch messages' },
-      { status: 500 }
-    )
+    console.error('Error fetching messages or conversations:', error)
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred'
+    return NextResponse.json({ error: 'Failed to fetch data', details: errorMessage }, { status: 500 })
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const data = await request.json()
-    const { recipientId, subject, content, relatedAppointmentId } = data
+    const body = await request.json()
+    const { recipientId, subject, content, relatedAppointmentId } = body as MessageData
 
-    // Validate required fields
     if (!recipientId || !content) {
-      return NextResponse.json(
-        { error: 'Missing required fields: recipientId, content' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Recipient ID and content are required' }, { status: 400 })
+    }
+    if (content.length < 1) {
+      return NextResponse.json({ error: 'Content cannot be empty' }, { status: 400 })
+    }
+    if (subject && subject.length > 255) {
+      return NextResponse.json({ error: 'Subject too long (max 255 chars)' }, { status: 400 })
+    }
+    if (recipientId === session.user.id) {
+      return NextResponse.json({ error: 'Cannot send a message to yourself' }, { status: 400})
     }
 
-    // Verify recipient exists
-    const recipient = await prisma.user.findUnique({
-      where: { id: recipientId }
-    })
 
-    if (!recipient) {
-      return NextResponse.json(
-        { error: 'Recipient not found' },
-        { status: 404 }
-      )
+    const messageData: MessageData = {
+      recipientId,
+      subject: subject || undefined,
+      content,
+      relatedAppointmentId: relatedAppointmentId || undefined
     }
 
-    // Create message
-    const message = await prisma.message.create({
-      data: {
-        senderId: session.user.id,
-        recipientId,
-        subject,
-        content,
-        relatedAppointmentId,
-        isRead: false,
-      },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            role: true,
-          }
-        },
-        recipient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            role: true,
-          }
-        }
-      }
-    })
-
-    // Create notification for recipient
-    await prisma.notification.create({
-      data: {
-        userId: recipientId,
-        title: 'New Message',
-        content: `New message from ${session.user.fullName}: ${subject || content.substring(0, 50)}`,
-        type: 'message',
-        referenceId: message.id,
-      }
-    })
-
-    return NextResponse.json(message, { status: 201 })
+    const newMessage = await sendMessage(session.user.id, messageData)
+    return NextResponse.json(newMessage, { status: 201 })
   } catch (error) {
     console.error('Error sending message:', error)
-    return NextResponse.json(
-      { error: 'Failed to send message' },
-      { status: 500 }
-    )
-  }
-}
-EOF  
-cd /home/project && cd ezfezf && cat > src/app/api/messages/route.ts << 'EOF'
-import { type NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
-
-export async function GET(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred'
+    if (errorMessage.toLowerCase().includes('recipient not found')) {
+      return NextResponse.json({ error: 'Recipient not found' }, { status: 404 })
     }
-
-    const { searchParams } = new URL(request.url)
-    const conversationWith = searchParams.get('conversationWith')
-    const limit = Number.parseInt(searchParams.get('limit') || '50')
-    const offset = Number.parseInt(searchParams.get('offset') || '0')
-
-    let whereClause: any = {
-      OR: [
-        { senderId: session.user.id },
-        { recipientId: session.user.id }
-      ]
-    }
-
-    // Filter by conversation partner if specified
-    if (conversationWith) {
-      whereClause = {
-        OR: [
-          {
-            senderId: session.user.id,
-            recipientId: conversationWith
-          },
-          {
-            senderId: conversationWith,
-            recipientId: session.user.id
-          }
-        ]
-      }
-    }
-
-    const messages = await prisma.message.findMany({
-      where: whereClause,
-      include: {
-        sender: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            role: true,
-          }
-        },
-        recipient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            role: true,
-          }
-        }
-      },
-      orderBy: {
-        createdAt: 'desc'
-      },
-      take: limit,
-      skip: offset
-    })
-
-    return NextResponse.json(messages)
-  } catch (error) {
-    console.error('Error fetching messages:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch messages' },
-      { status: 500 }
-    )
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions)
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    const data = await request.json()
-    const { recipientId, subject, content, relatedAppointmentId } = data
-
-    // Validate required fields
-    if (!recipientId || !content) {
-      return NextResponse.json(
-        { error: 'Missing required fields: recipientId, content' },
-        { status: 400 }
-      )
-    }
-
-    // Verify recipient exists
-    const recipient = await prisma.user.findUnique({
-      where: { id: recipientId }
-    })
-
-    if (!recipient) {
-      return NextResponse.json(
-        { error: 'Recipient not found' },
-        { status: 404 }
-      )
-    }
-
-    // Create message
-    const message = await prisma.message.create({
-      data: {
-        senderId: session.user.id,
-        recipientId,
-        subject,
-        content,
-        relatedAppointmentId,
-        isRead: false,
-      },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            role: true,
-          }
-        },
-        recipient: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            image: true,
-            role: true,
-          }
-        }
-      }
-    })
-
-    // Create notification for recipient
-    await prisma.notification.create({
-      data: {
-        userId: recipientId,
-        title: 'New Message',
-        content: `New message from ${session.user.fullName}: ${subject || content.substring(0, 50)}`,
-        type: 'message',
-        referenceId: message.id,
-      }
-    })
-
-    return NextResponse.json(message, { status: 201 })
-  } catch (error) {
-    console.error('Error sending message:', error)
-    return NextResponse.json(
-      { error: 'Failed to send message' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to send message', details: errorMessage }, { status: 500 })
   }
 }
